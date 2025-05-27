@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Power, RotateCw, Zap, Activity, Settings, Wifi, WifiOff } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Power, RotateCw, Zap, Activity, Settings, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 
 export default function ServoControlPanel() {
   // 初始化6个舵机的状态
@@ -14,10 +14,55 @@ export default function ServoControlPanel() {
 
   const [isConnected, setIsConnected] = useState(false);
   const [lastCommand, setLastCommand] = useState('');
-  const [targetIp, setTargetIp] = useState('');  // 硬件IP
-  const [targetPort, setTargetPort] = useState('8888');  // 硬件端口
+  const [targetIp, setTargetIp] = useState('');
+  const [targetPort, setTargetPort] = useState('8888');
   const [showSettings, setShowSettings] = useState(false);
-  const [connectionMode, setConnectionMode] = useState('simulation'); // simulation | hardware
+  const [connectionMode, setConnectionMode] = useState('simulation');
+  const [autoSync, setAutoSync] = useState(true); // 自动同步开关
+  const [lastSyncTime, setLastSyncTime] = useState('');
+
+  // 从API获取当前状态
+  const syncStatusFromAPI = async () => {
+    try {
+      const response = await fetch('/api/status');
+      const data = await response.json();
+      
+      if (data.success && data.servos) {
+        console.log('🔄 同步状态:', data.servos);
+        
+        // 更新舵机状态
+        setServos(prev => prev.map(servo => {
+          const apiState = data.servos[servo.id];
+          if (apiState) {
+            return {
+              ...servo,
+              angle: apiState.angle,
+              status: 'idle'
+            };
+          }
+          return servo;
+        }));
+        
+        setLastSyncTime(new Date().toLocaleTimeString());
+        setIsConnected(true);
+      }
+    } catch (error) {
+      console.error('❌ 同步失败:', error);
+    }
+  };
+
+  // 定时同步（每2秒检查一次）
+  useEffect(() => {
+    if (autoSync) {
+      const interval = setInterval(syncStatusFromAPI, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [autoSync]);
+
+  // 页面加载时立即同步一次
+  useEffect(() => {
+    syncStatusFromAPI();
+  }, []);
 
   // 发送HTTP请求控制舵机
   const controlServo = async (servoId, angle) => {
@@ -54,12 +99,8 @@ export default function ServoControlPanel() {
         // 模拟舵机运动时间
         await new Promise(resolve => setTimeout(resolve, 800));
         
-        // 更新舵机角度和状态
-        setServos(prev => prev.map(servo => 
-          servo.id === servoId 
-            ? { ...servo, angle: angle, status: 'idle' }
-            : servo
-        ));
+        // 立即同步最新状态
+        await syncStatusFromAPI();
         
         setIsConnected(true);
         setLastCommand(`✅ 成功: ${data.message}`);
@@ -142,6 +183,24 @@ export default function ServoControlPanel() {
                 <Settings className="w-5 h-5" />
               </button>
               
+              <button
+                onClick={syncStatusFromAPI}
+                className="p-2 bg-blue-700/50 hover:bg-blue-600/50 rounded-lg text-white transition-colors"
+                title="手动同步状态"
+              >
+                <RefreshCw className="w-5 h-5" />
+              </button>
+              
+              <div className="text-right">
+                <div className="text-sm text-gray-300">自动同步</div>
+                <div className={`flex items-center space-x-2 ${autoSync ? 'text-green-400' : 'text-gray-400'}`}>
+                  <div className={`w-3 h-3 rounded-full ${autoSync ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
+                  <span className="font-medium text-xs">
+                    {autoSync ? (lastSyncTime ? `已同步 ${lastSyncTime}` : '启用') : '关闭'}
+                  </span>
+                </div>
+              </div>
+              
               <div className="text-right">
                 <div className="text-sm text-gray-300">连接模式</div>
                 <div className={`flex items-center space-x-2 ${connectionMode === 'hardware' ? 'text-blue-400' : 'text-yellow-400'}`}>
@@ -168,6 +227,26 @@ export default function ServoControlPanel() {
           {showSettings && (
             <div className="mt-6 p-4 bg-black/30 rounded-lg border border-gray-600">
               <h3 className="text-white font-bold mb-4">连接设置</h3>
+              
+              {/* 自动同步开关 */}
+              <div className="mb-4">
+                <label className="text-gray-300 text-sm mb-2 block">实时同步:</label>
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => setAutoSync(!autoSync)}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      autoSync 
+                        ? 'bg-green-600 text-white' 
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    {autoSync ? '🔄 自动同步已启用' : '⏸️ 自动同步已关闭'}
+                  </button>
+                  <span className="text-xs text-gray-400">
+                    启用后每2秒检查API状态变化
+                  </span>
+                </div>
+              </div>
               
               {/* 模式切换 */}
               <div className="mb-4">
@@ -223,10 +302,9 @@ export default function ServoControlPanel() {
               )}
               
               <div className="mt-3 text-xs text-gray-400">
-                {connectionMode === 'simulation' 
-                  ? '🔧 模拟模式：所有操作都会成功，用于测试界面功能'
-                  : '🤖 硬件模式：通过Vercel代理连接到实际硬件设备'
-                }
+                💡 现在支持直接访问API影响页面显示！
+                <br />
+                试试访问: <code className="bg-gray-800 px-1 rounded">/api/servo?servo=1&angle=45</code>
               </div>
             </div>
           )}
@@ -237,6 +315,46 @@ export default function ServoControlPanel() {
               <div className="text-blue-100 font-mono text-sm break-all">{lastCommand}</div>
             </div>
           )}
+        </div>
+
+        {/* API直接调用示例 */}
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
+          <h2 className="text-xl font-bold text-white mb-4">🔗 直接API控制</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-black/30 rounded-lg p-4">
+              <h3 className="text-green-400 font-bold mb-2">试试这些链接：</h3>
+              <div className="space-y-2 text-sm font-mono">
+                <a 
+                  href="/api/servo?servo=1&angle=0" 
+                  target="_blank"
+                  className="block text-blue-400 hover:text-blue-300 underline"
+                >
+                  /api/servo?servo=1&angle=0
+                </a>
+                <a 
+                  href="/api/servo?servo=2&angle=180" 
+                  target="_blank"
+                  className="block text-blue-400 hover:text-blue-300 underline"
+                >
+                  /api/servo?servo=2&angle=180
+                </a>
+                <a 
+                  href="/api/servo?servo=3&angle=90" 
+                  target="_blank"
+                  className="block text-blue-400 hover:text-blue-300 underline"
+                >
+                  /api/servo?servo=3&angle=90
+                </a>
+              </div>
+            </div>
+            <div className="bg-black/30 rounded-lg p-4">
+              <h3 className="text-yellow-400 font-bold mb-2">效果：</h3>
+              <p className="text-gray-300 text-sm">
+                点击左侧链接后，这个页面的舵机显示会在2秒内自动更新！
+                不需要刷新页面。
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* 预设位置按钮 */}
@@ -344,16 +462,15 @@ export default function ServoControlPanel() {
         <div className="mt-8 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
           <h3 className="text-lg font-bold text-white mb-3">API配置</h3>
           <div className="bg-black/30 rounded-lg p-4 font-mono text-green-400 text-sm">
-            <div>代理API: /api/servo</div>
+            <div>控制API: /api/servo?servo=ID&angle=角度</div>
+            <div>状态API: /api/status (每2秒自动检查)</div>
             <div>当前模式: {connectionMode === 'hardware' ? '硬件模式' : '模拟模式'}</div>
+            <div>自动同步: {autoSync ? '启用' : '关闭'}</div>
             {connectionMode === 'hardware' && targetIp && (
               <div>目标设备: {targetIp}:{targetPort}</div>
             )}
             <div className="text-gray-400 mt-2">
-              {connectionMode === 'hardware' 
-                ? '硬件模式 - 通过Vercel代理转发请求到实际设备'
-                : '模拟模式 - 所有请求都会返回成功，用于测试'
-              }
+              💡 现在支持直接访问API链接来控制舵机，页面会自动同步显示最新状态
             </div>
           </div>
         </div>
