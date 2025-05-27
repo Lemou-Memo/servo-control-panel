@@ -1,503 +1,80 @@
 import React, { useState, useEffect } from 'react';
-import { Power, RotateCw, Zap, Activity, Settings, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 
-export default function ServoControlPanel() {
-  // 初始化6个舵机的状态
-  const [servos, setServos] = useState([
-    { id: 1, angle: 90, name: '底座旋转', status: 'idle' },
-    { id: 2, angle: 90, name: '大臂升降', status: 'idle' },
-    { id: 3, angle: 90, name: '小臂俯仰', status: 'idle' },
-    { id: 4, angle: 90, name: '腕部旋转', status: 'idle' },
-    { id: 5, angle: 90, name: '腕部俯仰', status: 'idle' },
-    { id: 6, angle: 90, name: '夹爪控制', status: 'idle' }
-  ]);
+export default function ServoPanel() {
+  const [servos, setServos] = useState({
+    1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 90
+  });
 
-  const [isConnected, setIsConnected] = useState(false);
-  const [lastCommand, setLastCommand] = useState('');
-  const [targetIp, setTargetIp] = useState('');
-  const [targetPort, setTargetPort] = useState('8888');
-  const [showSettings, setShowSettings] = useState(false);
-  const [connectionMode, setConnectionMode] = useState('simulation');
-  const [autoSync, setAutoSync] = useState(true); // 自动同步开关
-  const [lastSyncTime, setLastSyncTime] = useState('');
-
-  // 从API获取当前状态
-  const syncStatusFromAPI = async () => {
-    try {
-      const response = await fetch('/api/status');
-      const data = await response.json();
-      
-      if (data.success && data.servos) {
-        console.log('🔄 同步状态:', data.servos);
-        
-        // 更新舵机状态
-        setServos(prev => prev.map(servo => {
-          const apiState = data.servos[servo.id];
-          if (apiState) {
-            return {
-              ...servo,
-              angle: apiState.angle,
-              status: 'idle'
-            };
-          }
-          return servo;
-        }));
-        
-        setLastSyncTime(new Date().toLocaleTimeString());
-        setIsConnected(true);
+  // 每2秒检查状态
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const response = await fetch('/api/servo');
+        const data = await response.json();
+        if (data.servos) {
+          setServos(data.servos);
+        }
+      } catch (error) {
+        console.log('检查状态失败');
       }
-    } catch (error) {
-      console.error('❌ 同步失败:', error);
-    }
-  };
+    };
 
-  // 定时同步（每2秒检查一次）
-  useEffect(() => {
-    if (autoSync) {
-      const interval = setInterval(syncStatusFromAPI, 2000);
-      return () => clearInterval(interval);
-    }
-  }, [autoSync]);
-
-  // 页面加载时立即同步一次
-  useEffect(() => {
-    syncStatusFromAPI();
+    checkStatus(); // 立即执行一次
+    const interval = setInterval(checkStatus, 2000);
+    return () => clearInterval(interval);
   }, []);
 
-  // 发送HTTP请求控制舵机
-  const controlServo = async (servoId, angle) => {
-    setLastCommand(`控制舵机${servoId} -> ${angle}°`);
-    
-    // 更新舵机状态为执行中
-    setServos(prev => prev.map(servo => 
-      servo.id === servoId 
-        ? { ...servo, status: 'moving' }
-        : servo
-    ));
-
-    try {
-      // 构建代理API请求
-      let apiUrl = `/api/servo?servo=${servoId}&angle=${angle}`;
-      
-      if (connectionMode === 'hardware' && targetIp) {
-        apiUrl += `&target_ip=${targetIp}&target_port=${targetPort}`;
-      }
-      
-      console.log(`📡 发送请求: ${apiUrl}`);
-      
-      const response = await fetch(apiUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      const data = await response.json();
-      console.log('📦 响应数据:', data);
-      
-      if (data.success) {
-        // 模拟舵机运动时间
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        // 立即同步最新状态
-        await syncStatusFromAPI();
-        
-        setIsConnected(true);
-        setLastCommand(`✅ 成功: ${data.message}`);
-      } else {
-        throw new Error(data.error || '控制失败');
-      }
-      
-    } catch (error) {
-      console.error('❌ 控制失败:', error);
-      setServos(prev => prev.map(servo => 
-        servo.id === servoId 
-          ? { ...servo, status: 'error' }
-          : servo
-      ));
-      setIsConnected(false);
-      setLastCommand(`❌ 失败: ${error.message}`);
-    }
-  };
-
-  // 角度滑块变化处理
-  const handleAngleChange = (servoId, newAngle) => {
-    const angle = parseInt(newAngle);
-    controlServo(servoId, angle);
-  };
-
-  // 预设位置
-  const presetPositions = {
-    '初始位置': [90, 90, 90, 90, 90, 90],
-    '准备位置': [0, 45, 135, 90, 45, 0],
-    '抓取位置': [45, 30, 150, 0, 90, 180],
-    '收纳位置': [0, 150, 30, 90, 0, 0]
-  };
-
-  // 执行预设位置
-  const executePreset = async (positions) => {
-    for (let i = 0; i < positions.length; i++) {
-      await controlServo(i + 1, positions[i]);
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
-  };
-
-  // 获取状态颜色
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'moving': return 'text-blue-500';
-      case 'error': return 'text-red-500';
-      default: return 'text-green-500';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'moving': return <Activity className="w-4 h-4 animate-spin" />;
-      case 'error': return <Zap className="w-4 h-4" />;
-      default: return <Power className="w-4 h-4" />;
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* 头部状态栏 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-purple-500/20 rounded-xl">
-                <RotateCw className="w-8 h-8 text-purple-400" />
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold text-white">机械臂控制中心</h1>
-                <p className="text-purple-200">6自由度舵机控制系统</p>
-              </div>
+    <div style={{ padding: '20px', fontFamily: 'Arial', backgroundColor: '#1a1a2e', color: 'white', minHeight: '100vh' }}>
+      <h1>舵机控制面板</h1>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginTop: '30px' }}>
+        {[1, 2, 3, 4, 5, 6].map(id => (
+          <div key={id} style={{ 
+            backgroundColor: '#16213e', 
+            padding: '20px', 
+            borderRadius: '10px',
+            textAlign: 'center'
+          }}>
+            <h3>舵机 {id}</h3>
+            <div style={{ fontSize: '2em', margin: '10px 0' }}>
+              {servos[id]}°
             </div>
-            
-            <div className="flex items-center space-x-6">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-white transition-colors"
-              >
-                <Settings className="w-5 h-5" />
-              </button>
-              
-              <button
-                onClick={syncStatusFromAPI}
-                className="p-2 bg-blue-700/50 hover:bg-blue-600/50 rounded-lg text-white transition-colors"
-                title="手动同步状态"
-              >
-                <RefreshCw className="w-5 h-5" />
-              </button>
-              
-              <div className="text-right">
-                <div className="text-sm text-gray-300">自动同步</div>
-                <div className={`flex items-center space-x-2 ${autoSync ? 'text-green-400' : 'text-gray-400'}`}>
-                  <div className={`w-3 h-3 rounded-full ${autoSync ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`}></div>
-                  <span className="font-medium text-xs">
-                    {autoSync ? (lastSyncTime ? `已同步 ${lastSyncTime}` : '启用') : '关闭'}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <div className="text-sm text-gray-300">连接模式</div>
-                <div className={`flex items-center space-x-2 ${connectionMode === 'hardware' ? 'text-blue-400' : 'text-yellow-400'}`}>
-                  {connectionMode === 'hardware' ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                  <span className="font-medium">
-                    {connectionMode === 'hardware' ? '硬件模式' : '模拟模式'}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <div className="text-sm text-gray-300">连接状态</div>
-                <div className={`flex items-center space-x-2 ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
-                  <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'} animate-pulse`}></div>
-                  <span className="font-medium">
-                    {isConnected ? '正常' : '待连接'}
-                  </span>
-                </div>
-              </div>
+            <div style={{ 
+              width: '100%', 
+              height: '10px', 
+              backgroundColor: '#333',
+              borderRadius: '5px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${(servos[id] / 180) * 100}%`,
+                height: '100%',
+                backgroundColor: '#4CAF50',
+                transition: 'width 0.5s'
+              }}></div>
             </div>
           </div>
-          
-          {/* 设置面板 */}
-          {showSettings && (
-            <div className="mt-6 p-4 bg-black/30 rounded-lg border border-gray-600">
-              <h3 className="text-white font-bold mb-4">连接设置</h3>
-              
-              {/* 自动同步开关 */}
-              <div className="mb-4">
-                <label className="text-gray-300 text-sm mb-2 block">实时同步:</label>
-                <div className="flex items-center space-x-4">
-                  <button
-                    onClick={() => setAutoSync(!autoSync)}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      autoSync 
-                        ? 'bg-green-600 text-white' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                  >
-                    {autoSync ? '🔄 自动同步已启用' : '⏸️ 自动同步已关闭'}
-                  </button>
-                  <span className="text-xs text-gray-400">
-                    启用后每2秒检查API状态变化
-                  </span>
-                </div>
-              </div>
-              
-              {/* 模式切换 */}
-              <div className="mb-4">
-                <label className="text-gray-300 text-sm mb-2 block">控制模式:</label>
-                <div className="flex space-x-4">
-                  <button
-                    onClick={() => setConnectionMode('simulation')}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      connectionMode === 'simulation' 
-                        ? 'bg-yellow-600 text-white' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                  >
-                    🔧 模拟模式
-                  </button>
-                  <button
-                    onClick={() => setConnectionMode('hardware')}
-                    className={`px-4 py-2 rounded-lg transition-colors ${
-                      connectionMode === 'hardware' 
-                        ? 'bg-blue-600 text-white' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                  >
-                    🤖 硬件模式
-                  </button>
-                </div>
-              </div>
-
-              {/* 硬件连接设置 */}
-              {connectionMode === 'hardware' && (
-                <div className="space-y-3">
-                  <div className="flex items-center space-x-4">
-                    <label className="text-gray-300 text-sm w-20">IP地址:</label>
-                    <input
-                      type="text"
-                      value={targetIp}
-                      onChange={(e) => setTargetIp(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
-                      placeholder="192.168.1.100 或 your-robot.ngrok.io"
-                    />
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <label className="text-gray-300 text-sm w-20">端口:</label>
-                    <input
-                      type="text"
-                      value={targetPort}
-                      onChange={(e) => setTargetPort(e.target.value)}
-                      className="w-32 px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
-                      placeholder="8888"
-                    />
-                  </div>
-                </div>
-              )}
-              
-              <div className="mt-3 text-xs text-gray-400">
-                💡 现在支持直接访问API影响页面显示！
-                <br />
-                试试访问: <code className="bg-gray-800 px-1 rounded">/api/servo?servo=1&angle=45</code>
-              </div>
-            </div>
-          )}
-          
-          {lastCommand && (
-            <div className="mt-4 p-3 bg-blue-500/20 rounded-lg border border-blue-500/30">
-              <div className="text-sm text-blue-200">执行状态</div>
-              <div className="text-blue-100 font-mono text-sm break-all">{lastCommand}</div>
-            </div>
-          )}
-        </div>
-
-        {/* API直接调用示例 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
-          <h2 className="text-xl font-bold text-white mb-4">🔗 直接API控制</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-black/30 rounded-lg p-4">
-              <h3 className="text-green-400 font-bold mb-2">试试这些链接：</h3>
-              <div className="space-y-2 text-sm font-mono">
-                <a 
-                  href="/api/servo?servo=1&angle=0" 
-                  target="_blank"
-                  className="block text-blue-400 hover:text-blue-300 underline"
-                >
-                  /api/servo?servo=1&angle=0
-                </a>
-                <a 
-                  href="/api/servo?servo=2&angle=180" 
-                  target="_blank"
-                  className="block text-blue-400 hover:text-blue-300 underline"
-                >
-                  /api/servo?servo=2&angle=180
-                </a>
-                <a 
-                  href="/api/servo?servo=3&angle=90" 
-                  target="_blank"
-                  className="block text-blue-400 hover:text-blue-300 underline"
-                >
-                  /api/servo?servo=3&angle=90
-                </a>
-              </div>
-            </div>
-            <div className="bg-black/30 rounded-lg p-4">
-              <h3 className="text-yellow-400 font-bold mb-2">效果：</h3>
-              <p className="text-gray-300 text-sm">
-                点击左侧链接后，这个页面的舵机显示会在2秒内自动更新！
-                不需要刷新页面。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 预设位置按钮 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
-          <h2 className="text-xl font-bold text-white mb-4">快速预设位置</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {Object.entries(presetPositions).map(([name, positions]) => (
-              <button
-                key={name}
-                onClick={() => executePreset(positions)}
-                className="p-4 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-xl border border-purple-500/30 hover:from-purple-500/30 hover:to-pink-500/30 transition-all duration-300 text-white font-medium"
-              >
-                {name}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 快速测试按钮 */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
-          <h2 className="text-xl font-bold text-white mb-4">快速测试</h2>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-            {[1, 2, 3, 4, 5, 6].map(servoId => (
-              <button
-                key={servoId}
-                onClick={() => controlServo(servoId, 180)}
-                className="p-3 bg-gradient-to-r from-green-500/20 to-blue-500/20 rounded-lg border border-green-500/30 hover:from-green-500/30 hover:to-blue-500/30 transition-all duration-300 text-white font-medium"
-              >
-                舵机{servoId} → 180°
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 舵机控制面板 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {servos.map((servo) => (
-            <div key={servo.id} className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 hover:bg-white/15 transition-all duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold text-white">舵机 {servo.id}</h3>
-                  <p className="text-sm text-purple-200">{servo.name}</p>
-                </div>
-                <div className={`flex items-center space-x-2 ${getStatusColor(servo.status)}`}>
-                  {getStatusIcon(servo.status)}
-                  <span className="text-sm font-medium">
-                    {servo.status === 'moving' ? '执行中' : 
-                     servo.status === 'error' ? '错误' : '就绪'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 角度显示 */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-gray-300">当前角度</span>
-                  <span className="text-2xl font-bold text-white">{servo.angle}°</span>
-                </div>
-                
-                {/* 角度可视化 */}
-                <div className="relative h-2 bg-gray-700 rounded-full overflow-hidden">
-                  <div 
-                    className="absolute h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
-                    style={{ width: `${(servo.angle / 180) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              {/* 角度控制滑块 */}
-              <div className="mb-4">
-                <input
-                  type="range"
-                  min="0"
-                  max="180"
-                  value={servo.angle}
-                  onChange={(e) => handleAngleChange(servo.id, e.target.value)}
-                  className="w-full h-3 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                  disabled={servo.status === 'moving'}
-                />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
-                  <span>0°</span>
-                  <span>90°</span>
-                  <span>180°</span>
-                </div>
-              </div>
-
-              {/* 快速角度按钮 */}
-              <div className="grid grid-cols-3 gap-2">
-                {[0, 90, 180].map(angle => (
-                  <button
-                    key={angle}
-                    onClick={() => controlServo(servo.id, angle)}
-                    disabled={servo.status === 'moving'}
-                    className="py-2 px-3 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {angle}°
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* API信息 */}
-        <div className="mt-8 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-          <h3 className="text-lg font-bold text-white mb-3">API配置</h3>
-          <div className="bg-black/30 rounded-lg p-4 font-mono text-green-400 text-sm">
-            <div>控制API: /api/servo?servo=ID&angle=角度</div>
-            <div>状态API: /api/status (每2秒自动检查)</div>
-            <div>当前模式: {connectionMode === 'hardware' ? '硬件模式' : '模拟模式'}</div>
-            <div>自动同步: {autoSync ? '启用' : '关闭'}</div>
-            {connectionMode === 'hardware' && targetIp && (
-              <div>目标设备: {targetIp}:{targetPort}</div>
-            )}
-            <div className="text-gray-400 mt-2">
-              💡 现在支持直接访问API链接来控制舵机，页面会自动同步显示最新状态
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
-      <style jsx>{`
-        input[type="range"]::-webkit-slider-thumb {
-          appearance: none;
-          height: 20px;
-          width: 20px;
-          border-radius: 50%;
-          background: linear-gradient(45deg, #8b5cf6, #ec4899);
-          cursor: pointer;
-          border: 2px solid white;
-          box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
-        }
-        
-        input[type="range"]::-moz-range-thumb {
-          height: 20px;
-          width: 20px;
-          border-radius: 50%;
-          background: linear-gradient(45deg, #8b5cf6, #ec4899);
-          cursor: pointer;
-          border: 2px solid white;
-          box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
-        }
-      `}</style>
+      <div style={{ marginTop: '30px', padding: '20px', backgroundColor: '#16213e', borderRadius: '10px' }}>
+        <h3>测试链接：</h3>
+        <div style={{ fontFamily: 'monospace', fontSize: '14px' }}>
+          <a href="/api/servo?servo=1&angle=0" target="_blank" style={{ color: '#4CAF50', display: 'block', margin: '5px 0' }}>
+            /api/servo?servo=1&angle=0
+          </a>
+          <a href="/api/servo?servo=2&angle=90" target="_blank" style={{ color: '#4CAF50', display: 'block', margin: '5px 0' }}>
+            /api/servo?servo=2&angle=90  
+          </a>
+          <a href="/api/servo?servo=3&angle=180" target="_blank" style={{ color: '#4CAF50', display: 'block', margin: '5px 0' }}>
+            /api/servo?servo=3&angle=180
+          </a>
+        </div>
+        <p style={{ color: '#888', fontSize: '12px', marginTop: '10px' }}>
+          点击链接后，页面会在2秒内自动更新显示
+        </p>
+      </div>
     </div>
   );
 }

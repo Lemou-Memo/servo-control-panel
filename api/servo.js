@@ -1,111 +1,25 @@
-// pages/api/servo.js
-// 在内存中存储舵机状态
+// 全局状态存储
 let servoStates = {
-  1: { angle: 90, timestamp: Date.now() },
-  2: { angle: 90, timestamp: Date.now() },
-  3: { angle: 90, timestamp: Date.now() },
-  4: { angle: 90, timestamp: Date.now() },
-  5: { angle: 90, timestamp: Date.now() },
-  6: { angle: 90, timestamp: Date.now() }
+  1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 90
 };
 
-export default async function handler(req, res) {
-  // 允许跨域
+export default function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
-  const { servo, angle, target_ip, target_port } = req.query;
-
-  if (!servo || !angle) {
-    return res.status(400).json({ 
-      error: '缺少必要参数', 
-      required: 'servo, angle' 
-    });
-  }
-
-  const servoId = parseInt(servo);
-  const targetAngle = parseInt(angle);
-
-  // 更新内存中的舵机状态
-  servoStates[servoId] = {
-    angle: targetAngle,
-    timestamp: Date.now()
-  };
-
-  // 如果没有指定目标IP，返回模拟成功
-  if (!target_ip || !target_port) {
+  
+  const { servo, angle } = req.query;
+  
+  if (servo && angle) {
+    // 更新状态
+    servoStates[servo] = parseInt(angle);
+    
     return res.json({ 
-      success: true, 
-      message: `模拟控制舵机${servo}转到${angle}度`,
-      servo: servoId,
-      angle: targetAngle,
-      timestamp: new Date().toISOString(),
-      mode: 'simulation',
-      updated: true // 标记状态已更新
+      success: true,
+      servo: parseInt(servo),
+      angle: parseInt(angle),
+      message: `舵机${servo}已设置为${angle}度`
     });
   }
-
-  try {
-    // 构建目标URL
-    const targetUrl = `http://${target_ip}:${target_port}/${servo}/${angle}`;
-    
-    // 设置超时时间
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    // 发送请求到实际硬件
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Servo-Control-Panel/1.0'
-      }
-    });
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const result = await response.text();
-      res.json({ 
-        success: true, 
-        message: `成功控制舵机${servo}转到${angle}度`,
-        servo: servoId,
-        angle: targetAngle,
-        response: result,
-        timestamp: new Date().toISOString(),
-        mode: 'hardware',
-        updated: true // 标记状态已更新
-      });
-    } else {
-      res.status(response.status).json({ 
-        error: `硬件响应错误: ${response.status}`,
-        servo: servoId,
-        angle: targetAngle
-      });
-    }
-
-  } catch (error) {
-    console.error('代理请求失败:', error);
-    
-    if (error.name === 'AbortError') {
-      res.status(408).json({ 
-        error: '请求超时，请检查硬件连接',
-        servo: servoId,
-        angle: targetAngle
-      });
-    } else {
-      res.status(500).json({ 
-        error: '无法连接到硬件设备',
-        details: error.message,
-        servo: servoId,
-        angle: targetAngle
-      });
-    }
-  }
+  
+  // 返回所有状态
+  res.json({ servos: servoStates });
 }
