@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Power, RotateCw, Zap, Activity } from 'lucide-react';
+import { Power, RotateCw, Zap, Activity, Settings, Wifi, WifiOff } from 'lucide-react';
 
 export default function ServoControlPanel() {
   // 初始化6个舵机的状态
@@ -14,10 +14,13 @@ export default function ServoControlPanel() {
 
   const [isConnected, setIsConnected] = useState(false);
   const [lastCommand, setLastCommand] = useState('');
+  const [targetIp, setTargetIp] = useState('');  // 硬件IP
+  const [targetPort, setTargetPort] = useState('8888');  // 硬件端口
+  const [showSettings, setShowSettings] = useState(false);
+  const [connectionMode, setConnectionMode] = useState('simulation'); // simulation | hardware
 
   // 发送HTTP请求控制舵机
   const controlServo = async (servoId, angle) => {
-    const url = `http://18.23.45.2:8888/${servoId}/${angle}`;
     setLastCommand(`控制舵机${servoId} -> ${angle}°`);
     
     // 更新舵机状态为执行中
@@ -28,32 +31,51 @@ export default function ServoControlPanel() {
     ));
 
     try {
-      // 发送实际HTTP请求
-      const response = await fetch(url, {
+      // 构建代理API请求
+      let apiUrl = `/api/servo?servo=${servoId}&angle=${angle}`;
+      
+      if (connectionMode === 'hardware' && targetIp) {
+        apiUrl += `&target_ip=${targetIp}&target_port=${targetPort}`;
+      }
+      
+      console.log(`📡 发送请求: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
         method: 'GET',
-        mode: 'no-cors', // 避免CORS问题
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
       
-      console.log(`发送请求: ${url}`);
+      const data = await response.json();
+      console.log('📦 响应数据:', data);
       
-      // 模拟延迟
-      await new Promise(resolve => setTimeout(resolve, 500));
+      if (data.success) {
+        // 模拟舵机运动时间
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        // 更新舵机角度和状态
+        setServos(prev => prev.map(servo => 
+          servo.id === servoId 
+            ? { ...servo, angle: angle, status: 'idle' }
+            : servo
+        ));
+        
+        setIsConnected(true);
+        setLastCommand(`✅ 成功: ${data.message}`);
+      } else {
+        throw new Error(data.error || '控制失败');
+      }
       
-      // 更新舵机角度和状态
-      setServos(prev => prev.map(servo => 
-        servo.id === servoId 
-          ? { ...servo, angle: angle, status: 'idle' }
-          : servo
-      ));
-      
-      setIsConnected(true);
     } catch (error) {
-      console.error('控制失败:', error);
+      console.error('❌ 控制失败:', error);
       setServos(prev => prev.map(servo => 
         servo.id === servoId 
           ? { ...servo, status: 'error' }
           : servo
       ));
+      setIsConnected(false);
+      setLastCommand(`❌ 失败: ${error.message}`);
     }
   };
 
@@ -75,7 +97,7 @@ export default function ServoControlPanel() {
   const executePreset = async (positions) => {
     for (let i = 0; i < positions.length; i++) {
       await controlServo(i + 1, positions[i]);
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
   };
 
@@ -113,27 +135,106 @@ export default function ServoControlPanel() {
             </div>
             
             <div className="flex items-center space-x-6">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-2 bg-gray-700/50 hover:bg-gray-600/50 rounded-lg text-white transition-colors"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+              
               <div className="text-right">
-                <div className="text-sm text-gray-300">连接状态</div>
-                <div className={`flex items-center space-x-2 ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
-                  <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'} animate-pulse`}></div>
+                <div className="text-sm text-gray-300">连接模式</div>
+                <div className={`flex items-center space-x-2 ${connectionMode === 'hardware' ? 'text-blue-400' : 'text-yellow-400'}`}>
+                  {connectionMode === 'hardware' ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
                   <span className="font-medium">
-                    {isConnected ? '已连接' : '未连接'}
+                    {connectionMode === 'hardware' ? '硬件模式' : '模拟模式'}
                   </span>
                 </div>
               </div>
               
               <div className="text-right">
-                <div className="text-sm text-gray-300">目标地址</div>
-                <div className="text-white font-mono text-sm">18.23.45.2:8888</div>
+                <div className="text-sm text-gray-300">连接状态</div>
+                <div className={`flex items-center space-x-2 ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                  <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'} animate-pulse`}></div>
+                  <span className="font-medium">
+                    {isConnected ? '正常' : '待连接'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
           
+          {/* 设置面板 */}
+          {showSettings && (
+            <div className="mt-6 p-4 bg-black/30 rounded-lg border border-gray-600">
+              <h3 className="text-white font-bold mb-4">连接设置</h3>
+              
+              {/* 模式切换 */}
+              <div className="mb-4">
+                <label className="text-gray-300 text-sm mb-2 block">控制模式:</label>
+                <div className="flex space-x-4">
+                  <button
+                    onClick={() => setConnectionMode('simulation')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      connectionMode === 'simulation' 
+                        ? 'bg-yellow-600 text-white' 
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    🔧 模拟模式
+                  </button>
+                  <button
+                    onClick={() => setConnectionMode('hardware')}
+                    className={`px-4 py-2 rounded-lg transition-colors ${
+                      connectionMode === 'hardware' 
+                        ? 'bg-blue-600 text-white' 
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                  >
+                    🤖 硬件模式
+                  </button>
+                </div>
+              </div>
+
+              {/* 硬件连接设置 */}
+              {connectionMode === 'hardware' && (
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-4">
+                    <label className="text-gray-300 text-sm w-20">IP地址:</label>
+                    <input
+                      type="text"
+                      value={targetIp}
+                      onChange={(e) => setTargetIp(e.target.value)}
+                      className="flex-1 px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
+                      placeholder="192.168.1.100 或 your-robot.ngrok.io"
+                    />
+                  </div>
+                  <div className="flex items-center space-x-4">
+                    <label className="text-gray-300 text-sm w-20">端口:</label>
+                    <input
+                      type="text"
+                      value={targetPort}
+                      onChange={(e) => setTargetPort(e.target.value)}
+                      className="w-32 px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
+                      placeholder="8888"
+                    />
+                  </div>
+                </div>
+              )}
+              
+              <div className="mt-3 text-xs text-gray-400">
+                {connectionMode === 'simulation' 
+                  ? '🔧 模拟模式：所有操作都会成功，用于测试界面功能'
+                  : '🤖 硬件模式：通过Vercel代理连接到实际硬件设备'
+                }
+              </div>
+            </div>
+          )}
+          
           {lastCommand && (
             <div className="mt-4 p-3 bg-blue-500/20 rounded-lg border border-blue-500/30">
-              <div className="text-sm text-blue-200">最后执行命令</div>
-              <div className="text-blue-100 font-mono">{lastCommand}</div>
+              <div className="text-sm text-blue-200">执行状态</div>
+              <div className="text-blue-100 font-mono text-sm break-all">{lastCommand}</div>
             </div>
           )}
         </div>
@@ -149,6 +250,22 @@ export default function ServoControlPanel() {
                 className="p-4 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-xl border border-purple-500/30 hover:from-purple-500/30 hover:to-pink-500/30 transition-all duration-300 text-white font-medium"
               >
                 {name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 快速测试按钮 */}
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8 border border-white/20">
+          <h2 className="text-xl font-bold text-white mb-4">快速测试</h2>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            {[1, 2, 3, 4, 5, 6].map(servoId => (
+              <button
+                key={servoId}
+                onClick={() => controlServo(servoId, 180)}
+                className="p-3 bg-gradient-to-r from-green-500/20 to-blue-500/20 rounded-lg border border-green-500/30 hover:from-green-500/30 hover:to-blue-500/30 transition-all duration-300 text-white font-medium"
+              >
+                舵机{servoId} → 180°
               </button>
             ))}
           </div>
@@ -225,11 +342,18 @@ export default function ServoControlPanel() {
 
         {/* API信息 */}
         <div className="mt-8 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-          <h3 className="text-lg font-bold text-white mb-3">API调用格式</h3>
-          <div className="bg-black/30 rounded-lg p-4 font-mono text-green-400">
-            <div>GET http://18.23.45.2:8888/[舵机ID]/[角度]</div>
-            <div className="text-gray-400 text-sm mt-2">
-              示例: http://18.23.45.2:8888/1/180 (控制舵机1转到180度)
+          <h3 className="text-lg font-bold text-white mb-3">API配置</h3>
+          <div className="bg-black/30 rounded-lg p-4 font-mono text-green-400 text-sm">
+            <div>代理API: /api/servo</div>
+            <div>当前模式: {connectionMode === 'hardware' ? '硬件模式' : '模拟模式'}</div>
+            {connectionMode === 'hardware' && targetIp && (
+              <div>目标设备: {targetIp}:{targetPort}</div>
+            )}
+            <div className="text-gray-400 mt-2">
+              {connectionMode === 'hardware' 
+                ? '硬件模式 - 通过Vercel代理转发请求到实际设备'
+                : '模拟模式 - 所有请求都会返回成功，用于测试'
+              }
             </div>
           </div>
         </div>
